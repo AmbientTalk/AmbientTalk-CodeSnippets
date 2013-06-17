@@ -1,0 +1,19 @@
+import /.at.lang.futures;
+
+def readInt() {
+	def [fut,res] := makeFuture();
+	system.readNextLine: { |line|
+  		res.resolve(line.parseNumeric);
+	} catch: { |ioException| /* ignored */ };
+	fut;
+};
+
+def lift(f) {
+	{|@args| 
+		when: (group: args)  becomes: { |values| 
+			f(@values); 
+		};
+	 }
+};
+
+lift({|a,b| system.println(a+b); })(readInt(),readInt());

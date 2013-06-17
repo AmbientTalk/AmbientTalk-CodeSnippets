@@ -1,0 +1,39 @@
+def makeTeamMember(id,ringSize) {
+	actor: { |id,ringSize| 
+		import /.at.lang.futures;
+		deftype Member;		
+		network.online();
+		def [fut,res] :=  makeFuture();
+
+		def interface := object: {
+			def getId() { id };
+			
+			def link(r) {
+				self.r := r;
+			};
+			
+			def next(count) {
+				system.println("Id " + id + " got a message hopcount = " + count);
+				fut<-next( count + 1 );
+			};
+		};
+				
+		def next() { 
+			interface<-next(0);
+		};
+		
+		export: interface as: Member;
+		whenever: Member discovered: { |mem|
+			 when: mem<-getId()@FutureMessage becomes: { |rid| 
+				if: (rid == ((id+1)%ringSize) ) then: {
+					res.resolve(mem);
+				}
+			};
+		};	
+	};
+};
+
+def ringSize := 10;
+def c := -1;
+def members[ringSize] { c := c+1; makeTeamMember(c,ringSize);  };
+members[1]<-next();
