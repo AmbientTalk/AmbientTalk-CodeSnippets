@@ -1,0 +1,16 @@
+deftype PingPong;
+
+whenever: PingPong discovered: { |pp|
+	system.println("ping: " + pp);
+	pp<-pong();
+};
+
+def o := object: {
+	def pong() {
+		system.println("pong!");
+	};
+};
+
+export: o as: PingPong;
+
+network.online();

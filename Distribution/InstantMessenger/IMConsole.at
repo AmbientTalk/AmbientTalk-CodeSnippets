@@ -1,0 +1,11 @@
+def IMConsole := object: {
+
+	def init(im){
+		system.println("What is your name?");
+		system.readNextLine: { |u| im.setUsername(u) } catch: { |e| system.println("error reading name: " + e.message) };
+	};
+
+	def display(text){
+    system.println(text);		
+	};
+};

@@ -1,0 +1,100 @@
+/**
+ * An unbounded FIFO queue, based on E's makeQueue.emaker
+ * TODO: include URL to original E source
+ *
+ * Enables easy producer-consumer relationships between objects
+ * dequeues on an empty queue result in futures that will be
+ * resolved when a producer later enqueues new results.
+ *
+ * @author tvcutsem
+ *
+ * Example trace:
+ *
+ * def makeQueue := /.at.collections.queue.makeQueue
+ * >><closure:makeQueue>
+ *
+ * >def q := makeQueue()
+ * >><obj:5351186{deq,enq}>
+ *
+ * >def a := q.deq()
+ * >><unresolved future>
+ *
+ * >a
+ * >><unresolved future>
+ *
+ * def b := q.deq()
+ * >><unresolved future>
+ *
+ * >b
+ * >><unresolved future>
+ *
+ * >q.enq("a"); q.enq("b"); q.enq("c")
+ * >><obj:1660355{future,future:=,resolve,rui...}@[Isolate]>
+ *
+ * >a
+ * >><resolved future:a>
+ *
+ * >b
+ * >><resolved future:b>
+ *
+ * >def c := q.deq()
+ * >><unresolved future>
+ *
+ * >c
+ * >><resolved future:c>
+ */
+import /.at.lang.futures;
+
+def makeQueue() {
+	def [qhead, qtail] := makeFuture();
+	def cons(elem, next) {
+		object: {
+			def getElem() { elem };
+			def getNext() { next };
+		}
+	};
+	object: {
+		def enq(elem) {
+			def [nextHead, nextTail] := makeFuture();
+			qtail.resolve(cons(elem, nextHead));
+			qtail := nextTail;
+		};
+		def deq() {
+			def result := qhead<-getElem()@FutureMessage;
+			qhead := qhead<-getNext()@FutureMessage;
+			result;
+		};	
+	};
+};
+
+def QueueModule := object: {
+	def makeQueue := &makeQueue;
+	
+	def queueTest() {
+		extend: /.at.unit.test.UnitTest.new("queueTest") with: {
+			
+			def testAsyncQueue() {
+			  def q := makeQueue();
+			  q.enq(3);
+			  def x := q.deq(); system.println("x = "+x);
+			  self.assertTrue(is: x taggedAs: Future);
+			  when: x becomes: { |v|
+				  self.assertEquals(3, v); system.println("x' = "+v);
+				  def y := q.deq(); system.println("y = "+y);
+				  self.assertTrue(is: y taggedAs: Future);
+
+				  def z := y<-inc()@FutureMessage; system.println("z = "+z);
+				  self.assertTrue(is: z taggedAs: Future);
+				  q.enq(4);
+				  def fy := when: y becomes: { |v|
+					  self.assertEquals(4, v); system.println("y' = "+v);
+					};
+					def fz := when: z becomes: { |v|
+						self.assertEquals(5, v); system.println("z' = "+v);
+					};
+					group: [fy, fz];
+				}	
+			}
+	  }
+	}
+};

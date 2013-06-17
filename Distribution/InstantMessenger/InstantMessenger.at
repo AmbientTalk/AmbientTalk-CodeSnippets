@@ -1,0 +1,161 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*
+ * The instant messenger is an extremely simple peer-to-peer instant messenger program
+ * meant to be deployed on mobile ad hoc networks. When peers join the ad hoc network, 
+ * the instant messenger should issue a warning to the user that a new buddy is available 
+ * for chatting. The user can then send simple text message to that buddy. When peers leave 
+ * the ad hoc network, the user should also be notified. 
+ *
+ * More detailed information can be found at http://prog.vub.ac.be/amop/at/introduction
+ *
+ * @author tvcutsem
+ * latest update: egonzale
+ */
+
+import /.at.lang.futures;
+enableFutures(false);
+
+def MESSAGE_TIMEOUT := seconds(30);
+//def IMGUI := jlobby.demo.instantmessenger.IMGUI;
+//def IMGUI := /.demo.instantmessenger.IMConsole;
+
+def createIM( IMGUI := /.demo.instantmessenger.IMConsole, timeout := MESSAGE_TIMEOUT) {
+
+  def username := jlobby.java.lang.System.getProperty("user.name");
+  def buddyList := jlobby.java.util.HashMap.new();
+
+  def TextMessage := object: {
+    def from := nil;
+    def content := nil;
+    def init(f,c) {
+      from := f;
+      content := c;
+    };
+  } taggedAs: [/.at.lang.types.Isolate];
+
+	// the facade object to the IM for local objects, i.e. IMGUI object.
+  def localFacade := object: {
+		def setUsername(un) { username := un; startIM()};
+    def talk(to, string) {
+		  def buddy := buddyList.get(to);
+		  if: (nil == buddy) then: {
+			  listener.display("Unknown buddy: " + to);
+		  } else: {
+		    def msg := TextMessage.new(username, string);
+			  when: buddy<-receive(msg)@Due(timeout) becomes: { |ack|
+			     listener.display( msg.content + " sent to: " + to);
+			  } catch: TimeoutException using: { |e|
+				 	listener.display("message: " + msg.content + " timed out.");
+			  };
+		 };
+    };
+  };
+
+  // the facade to the IM for remote objects
+  def remoteFacade := object: {
+    def receive(textMsg) {
+      listener.display(textMsg.from + ": " + textMsg.content);
+    };
+    def getName() { 
+			username 
+		};
+  };
+
+  deftype InstantMessenger;
+
+  // engage in peer-to-peer service discovery
+  def startIM() {
+	
+		export: remoteFacade as: InstantMessenger;
+  
+    whenever: InstantMessenger discovered: { |messenger|
+      when: messenger<-getName()@FutureMessage becomes: { |name|
+    		if: (nil == buddyList.get(name)) then: {
+		  		buddyList.put(name, messenger);
+		  		listener.display("Added buddy: " + name);
+		  		whenever: messenger disconnected: {
+			  		listener.display("Buddy offline:" +name);
+		  		};
+		  		whenever: messenger reconnected: {
+			  		listener.display("Buddy online:" +name);
+		  		};
+				};
+	  	}; 
+    };
+  };
+
+  def listener := IMGUI.new(localFacade);
+
+  localFacade;
+};
+
+def InstantMessengerTest() {
+ extend: /.at.unit.test.UnitTest.new("InstantMessenger test") with: {
+  def test := self;
+
+  def testAsyncMessageSend() {
+	  def [fut,res] := /.at.lang.futures.makeFuture();
+			def IMGUI := object: {
+				def init(im) { im.setUsername("Aact") };
+				def display(text) {
+					test.assertEquals("Added buddy: Bact", text); 
+					res.resolve(true);
+				};
+			};
+			def A := createIM(IMGUI);
+
+    def Bact := actor: {
+			def IMGUI := object: {
+				def init(im) { im.setUsername("Bact") };
+				def display(text) { };
+			};
+			def B := /.demo.instantmessenger.InstantMessenger.createIM(IMGUI);
+	  };
+	 fut;  
+  };
+ }; 
+};
+
+/**
+ * The instant messenger can be started in GUI mode from the command
+ * line, optionally passing a timeout for messages (in seconds)
+ * Usage:
+ *  iat InstantMessenger.at -- -gui 50
+ */
+let: { |args := system.getArgv()|
+  if: ((args.length > 0).and: { args[1]=="-gui" }) then: {
+	  if: (args.length > 1) then: {
+		  createIM(jlobby.at.demo.IMGUI, seconds(args[2].parseNumeric));
+	  } else: {
+		  createIM(jlobby.at.demo.IMGUI);		
+	  }
+  };
+};
+
+self

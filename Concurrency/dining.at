@@ -1,0 +1,196 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* Dijkstra's Dining Philosophers in AmbientTalk.
+ * For an introduction to this world-famous example, cf. e.g. Wikipedia.
+ * 
+ * The solution in AmbientTalk is 'exotic' because it is an event-loop
+ * system, which does not allow its event loops to 'suspend'. To 'simulate'
+ * thread suspension, we make use of first-class futures to delay the
+ * execution of certain pieces of code until certain conditions are met.
+ * (cf. the wait/notify methods of the CondVar object defined below)
+ *
+ * The most important concurrency control properties are:
+ * 1) No two adjacent philosophers can eat at the same time (they need the same fork).
+ * 2) Philosophers should not 'starve' (deadlock). Hence, care must be taken that a
+ *    philosopher can pick up his two adjacent forks *atomically*.
+ *
+ * The solution below adheres to both properties.
+ * If anybody finds a more elegant event-driven solution to the problem, please tell me :)
+ *
+ * @author tvcutsem
+ */
+import /.at.lang.futures;
+enableFutures(false);
+
+// a condition variable, represented as a queue of outstanding (unresolved) futures.
+// A caller that wants to suspend on the condition variable must invoke its wait()
+// method, which returns a future. By adding a when:becomes: listener to this future,
+// the listener's code is effectively delayed until the condition variable's notify
+// method is invoked.
+def makeCondVar() {
+	def waitingQ := [];
+	object: {
+		def wait() {
+			def [fut,res] := makeFuture();
+			waitingQ := waitingQ + [res]; // enqueue
+			fut;
+		};
+		def notify() {
+			if: !(waitingQ == []) then: {
+				waitingQ[1].resolve(`ok);
+				waitingQ := waitingQ.select(2,waitingQ.length + 1); // dequeue
+			}
+		};
+	};
+};
+
+// a room is represented as n forks, where each fork's status is a boolean
+// indicating whether it is available or not
+def makeRoom(n) {
+	def available[n] { true };
+	def condvars[n] { makeCondVar() };
+	
+	// check if a fork is available. If it is not, returns a future on which to "suspend"
+	def check(idx) {
+		if: !(available[idx]) then: { [condvars[idx].wait()] } else: { [] };
+	};
+	
+	object: {
+		def pickUp(i) {
+			// returns future which is resolved only
+			// when forks i and (i%n)+1 are available
+			if: (available[i].and: { available[(i%n)+1] }) then: {
+				// atomically grab 2 forks at once
+				available[i] := false;
+				available[(i%n)+1] := false;
+				`hereAreYourForks; // just a dummy symbol to represent fork synchronisation
+			} else: {
+				// check returns a table of 0 or 1 condvars, so the sum of both tables
+				// contains 0, 1 or 2 convars. The group: function waits until all
+				// futures in this table are resolved (i.e. it is a synchronisation barrier).
+			  when: (group: check(i) + check((i%n)+1)) becomes: { |signals|
+				  // try to pick up both forks again
+					self.pickUp(i);
+				}
+			}
+		};
+		def putDown(i) {
+			// atomically release the two forks
+			available[i] := true;
+			available[(i%n)+1] := true;
+			condvars[i].notify();
+			condvars[(i%n)+1].notify();
+		};
+	}
+};
+
+// spawn names.length actors to simulate the dining philosophers
+def startDiningPhilosophers(@names) {
+	def room := makeRoom(names.length); // room shared by all philosophers
+	
+	// 1 *** n generates the sequence [1,2,3,...,n]
+	def philosophers := (1***names.length).map: { |i|
+		// pass index, name and far reference to the room to the new actor
+		def name := names[i];
+		actor: { |i,name,room|
+			
+			// re-import modules because every module is actor-local
+			import /.at.lang.futures; enableFutures(false);
+			def TimerModule := /.at.support.timer;
+			
+			// number of times this philosopher has eaten
+			def numTimesEaten := 0;
+      // asynchronous continuation of the 'live' method
+			def continuation := { self<-live() };
+			
+			def live() {
+				when: think() becomes: { |doneThinking|
+					// important: <-pickUp(i) returns *both* forks i and (i%n)+1
+					when: room<-pickUp(i)@FutureMessage becomes: { |forks|
+						when: eat(forks) becomes: { |doneEating|
+							room<-putDown(i)@OneWayMessage;
+							continuation();
+							nil;
+						}
+					}
+				}	
+			};
+			
+			def think() {
+				system.println("Philo " + i + ": " + name + " is thinking");
+				sleep(TimerModule.seconds(2));
+			};
+			
+			def eat(forks) {
+				system.println("Philo " + i + ": "+ name + " is eating");
+				numTimesEaten := numTimesEaten + 1;
+				sleep(TimerModule.seconds(1));
+			};
+			
+			// returns a future which is resolved with 'block()' after 'period' milliseconds
+			def sleep(period, block := { }) {
+				// future: is auxiliary function of the Futures Module. It returns
+				// a future which is resolved with the value passed to the 'reply' closure
+				future: { |reply|
+					TimerModule.when: period elapsed: {
+						reply(block())
+					}
+				};
+			};
+			
+			// returns the number of times a philo has eaten after it
+			// has completed all of its scheduled computations
+			def die() {
+				future: { |reply|
+					// return a tuple (name, times eaten)
+				  continuation := { reply([name,numTimesEaten]) };
+				};
+			};
+			
+			live();
+	  }
+	};
+	
+	object: {
+		def stop() {
+			when: (group: (philosophers.map: { |p| p<-die()@FutureMessage })) becomes: { |replies|
+				replies.each: { |reply|
+					def [name, timesEaten] := reply; // pattern-match on the returned tuple
+					system.println(name + " ate " + timesEaten + " times.");
+				};
+			}
+		};
+	};
+	
+};
+
+def simulation := startDiningPhilosophers("Socrates","Kant","Hume","Locke","Heidegger");
+
+/.at.support.timer.when: seconds(30) elapsed: {
+	simulation.stop();
+}

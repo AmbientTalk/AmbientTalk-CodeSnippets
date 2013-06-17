@@ -1,0 +1,113 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* An example of conditional synchronization based on the Computer Dating Service
+ * example of Henry Lieberman from his paper on
+ *   Concurrent Object oriented programming in ACT 1 (1987)
+ *   in OO concurrent Programming, Yonezawa and Tokoro eds., MIT Press
+ *
+ * @author tvcutsem
+ */
+import /.at.lang.futures;
+def TimerM := /.at.support.timer;
+
+def makePerson(nam, sx) {
+	object: {
+		def name := nam;
+		def sex := sx;
+	}
+};
+
+def makeQuestionnaire(p) {
+	def idealPersonResolver;
+	
+	object: {
+		def person := p;
+		// our 'match making' procedure is rather simple for the moment:
+		// we assume for the sake of the example that people of opposite sexes match
+		def matches(otherQ) { otherQ.person.sex != p.sex };
+		def wait() {
+			def [future, resolver] := makeFuture();
+			idealPersonResolver := resolver;
+			future
+		};
+		def notify(name) { idealPersonResolver.resolve(name) };
+	};
+};
+
+def makeDatingService() {
+	def people := []; // a list of Questionnaire objects
+	object: {
+		def match(lonelyHeart) {
+			def lonelyHeartQ := makeQuestionnaire(lonelyHeart);
+			{ |return|
+				people.each: { |idealMateQ|
+					// an ideal mate was found
+					if: (idealMateQ.matches(lonelyHeartQ).and: { lonelyHeartQ.matches(idealMateQ) }) then: {
+						idealMateQ.notify(lonelyHeart.name); // notify idealMate
+						// remove the person from the database
+						people := people.filter: { |q| q != idealMateQ };
+						return(idealMateQ.person.name) // notify lonelyHeart
+					}
+				};
+				// no ideal mate was found, store its questionnaire in the database
+				people := people + [lonelyHeartQ];
+				lonelyHeartQ.wait(); // return a future for the ideal person's name
+			}.escape();
+		};
+	};	
+};
+
+// bob will match with dana and alice will match with charles
+def p1 := makePerson("bob","male");
+def p2 := makePerson("charles","male");
+def p3 := makePerson("dana","female");
+def p4 := makePerson("alice","female");
+
+def d := makeDatingService();
+def register(p) {
+	when: d<-match(p)@FutureMessage becomes: { |nam|
+		system.println(p.name + " matched with " + nam);
+	};
+};
+
+TimerM.when: seconds(2) elapsed: {
+	register(p1);
+	system.println("added "+p1.name);
+};
+TimerM.when: seconds(4) elapsed: {
+	register(p2);
+	system.println("added "+p2.name);
+};
+TimerM.when: seconds(6) elapsed: {
+	register(p3);
+	system.println("added "+p3.name);
+};
+TimerM.when: seconds(8) elapsed: {
+	register(p4);
+	system.println("added "+p4.name);
+};
