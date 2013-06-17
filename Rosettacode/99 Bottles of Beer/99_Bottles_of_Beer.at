@@ -2,5 +2,5 @@
  	system.println(numBottles, " bottles of beer on the wall");
 	system.println(numBottles, " bottles of beer");
 	system.println("Take one down, pass it around");
-	system.println(numBottles - 1, " bottles of beer on the wall\n");
+	system.println(numBottles - 1, " bottles of beer on the wall");
 };
